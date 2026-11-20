@@ -12,6 +12,8 @@
 - The MQTT flag check runs after the flags were parsed. Without an MQTT server
   address, MQTT is now disabled instead of retrying forever.
 - A failed Telegram request logs the error, without the bot key.
+- The image builds on current Supervisor versions, which no longer pass
+  `BUILD_FROM`: the Dockerfile has a default base image.
 - `s7cli` builds again (wrong import path), and bit addresses are calculated
   correctly for bytes other than 0.
 
