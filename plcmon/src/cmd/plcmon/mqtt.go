@@ -53,18 +53,26 @@ type haDevice struct {
 }
 
 type haEntity struct {
-	Name              string   `json:"name"`
-	UniqueID          string   `json:"unique_id"`
-	DeviceClass       string   `json:"device_class,omitempty"`
-	StateTopic        string   `json:"state_topic,omitempty"`
-	CommandTopic      string   `json:"command_topic,omitempty"`
-	PayloadOn         string   `json:"payload_on,omitempty"`
-	PayloadOff        string   `json:"payload_off,omitempty"`
-	PayloadPress      string   `json:"payload_press,omitempty"`
-	StateOn           string   `json:"state_on,omitempty"`
-	StateOff          string   `json:"state_off,omitempty"`
-	AvailabilityTopic string   `json:"availability_topic"`
-	Device            haDevice `json:"device"`
+	Name              string           `json:"name"`
+	UniqueID          string           `json:"unique_id"`
+	DeviceClass       string           `json:"device_class,omitempty"`
+	StateTopic        string           `json:"state_topic,omitempty"`
+	CommandTopic      string           `json:"command_topic,omitempty"`
+	PayloadOn         string           `json:"payload_on,omitempty"`
+	PayloadOff        string           `json:"payload_off,omitempty"`
+	PayloadPress      string           `json:"payload_press,omitempty"`
+	StateOn           string           `json:"state_on,omitempty"`
+	StateOff          string           `json:"state_off,omitempty"`
+	AvailabilityTopic string           `json:"availability_topic,omitempty"`
+	Availability      []haAvailability `json:"availability,omitempty"`
+	AvailabilityMode  string           `json:"availability_mode,omitempty"`
+	Device            haDevice         `json:"device"`
+}
+
+type haAvailability struct {
+	Topic               string `json:"topic"`
+	PayloadAvailable    string `json:"payload_available,omitempty"`
+	PayloadNotAvailable string `json:"payload_not_available,omitempty"`
 }
 
 type mqttMessage struct {
@@ -73,7 +81,9 @@ type mqttMessage struct {
 }
 
 func discoveryMessage(component string, e haEntity) mqttMessage {
-	e.AvailabilityTopic = availabilityTopic
+	if len(e.Availability) == 0 {
+		e.AvailabilityTopic = availabilityTopic
+	}
 	e.Device = haDevice{
 		Identifiers:  "PLCMON",
 		Name:         "PLCMON",
@@ -146,6 +156,19 @@ func discoveryMessages(writeEnabled bool) []mqttMessage {
 			e.PayloadOff = payloadOff
 			e.StateOn = "true"
 			e.StateOff = "false"
+		}
+		if c.onlyDisarmed {
+			// Unavailable in Home Assistant while PLCMON is offline or the
+			// alarm system is armed.
+			e.Availability = []haAvailability{
+				{Topic: availabilityTopic},
+				{
+					Topic:               entityTopic("binary_sensor", "plcmon_armed", "state"),
+					PayloadAvailable:    "false",
+					PayloadNotAvailable: "true",
+				},
+			}
+			e.AvailabilityMode = "all"
 		}
 		msgs = append(msgs, discoveryMessage(c.component, e))
 	}

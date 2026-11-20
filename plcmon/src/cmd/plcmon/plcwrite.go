@@ -51,6 +51,10 @@ type plcControl struct {
 	// unique_id of the status sensor which reports the state to Home
 	// Assistant.
 	stateSensor string
+	// Refuse the command unless the alarm system is known to be disarmed.
+	// The PLC does not allow the Dauerlicht while armed and keeps reporting
+	// it as off, so the switch would press the push button again and again.
+	onlyDisarmed bool
 }
 
 var plcControls = []plcControl{
@@ -62,7 +66,8 @@ var plcControls = []plcControl{
 	// push button.
 	{key: "flurlicht_dauerlicht", id: "plcmon_sw_flurlicht_dauerlicht", name: "Flurlicht Dauerlicht",
 		component: "switch", bit: s7.BitFlurlichtHold,
-		stateBit: s7.BitDauerlicht, stateSensor: "plcmon_status_dauerlicht"},
+		stateBit: s7.BitDauerlicht, stateSensor: "plcmon_status_dauerlicht",
+		onlyDisarmed: true},
 }
 
 const (
@@ -78,7 +83,9 @@ type plcCommand struct {
 	toggle   bool
 	stateBit s7.Merker
 	want     bool
-	created  time.Time
+	// Refuse the command unless the alarm system is disarmed.
+	onlyDisarmed bool
+	created      time.Time
 }
 
 // parseCommand translates an MQTT command into a PLC command.
@@ -88,7 +95,7 @@ func parseCommand(key string, payload string) (plcCommand, error) {
 			continue
 		}
 
-		cmd := plcCommand{name: c.key, bit: c.bit}
+		cmd := plcCommand{name: c.key, bit: c.bit, onlyDisarmed: c.onlyDisarmed}
 
 		switch {
 		case c.component == "button" && payload == payloadPress:
@@ -119,14 +126,17 @@ type plcWriter struct {
 	dial  func() plcConn
 	hold  time.Duration
 	now   func() time.Time
+	// disarmed reports whether the alarm system is known to be disarmed.
+	disarmed func() bool
 }
 
-func newPLCWriter(addr string) *plcWriter {
+func newPLCWriter(addr string, store *stateStore) *plcWriter {
 	return &plcWriter{
-		queue: make(chan plcCommand, 8),
-		dial:  func() plcConn { return s7.NewA05PLC(addr) },
-		hold:  plcPulseHold,
-		now:   time.Now,
+		queue:    make(chan plcCommand, 8),
+		dial:     func() plcConn { return s7.NewA05PLC(addr) },
+		hold:     plcPulseHold,
+		now:      time.Now,
+		disarmed: store.Disarmed,
 	}
 }
 
@@ -157,6 +167,14 @@ func (w *plcWriter) process(cmd plcCommand) {
 	if age := w.now().Sub(cmd.created); age > plcCommandMaxAge {
 		plcErrors.Inc()
 		klog.Errorf("s7: dropping stale command %s (%v old)", cmd.name, age)
+		return
+	}
+
+	// Checked right before execution, so that a command queued shortly
+	// before arming is not executed either.
+	if cmd.onlyDisarmed && !w.disarmed() {
+		plcErrors.Inc()
+		klog.Warningf("s7: refusing command %s, the alarm system is armed or its state is unknown", cmd.name)
 		return
 	}
 

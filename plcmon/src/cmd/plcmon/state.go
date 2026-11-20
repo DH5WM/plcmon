@@ -76,6 +76,13 @@ func (s *stateStore) setAlarmLocked(a mqttStatus) (changed bool) {
 	return
 }
 
+// Disarmed is true only if the alarm system is known to be disarmed.
+func (s *stateStore) Disarmed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cur.AlarmKnown && !s.cur.Alarm.Armed
+}
+
 func (s *stateStore) Snapshot() snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -62,7 +62,7 @@ func main() {
 
 	var writer *plcWriter
 	if *flagEnableWrite {
-		writer = newPLCWriter(*flagSpsAddr)
+		writer = newPLCWriter(*flagSpsAddr, store)
 		go writer.run()
 	}
 

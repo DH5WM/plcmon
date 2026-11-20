@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1
+
+### Fixed
+
+- The Flurlicht Dauerlicht switch is refused while the alarm system is armed
+  or its state is unknown, and it is unavailable in Home Assistant then. The
+  PLC does not allow the Dauerlicht while armed and keeps reporting it as
+  off, so every ON command toggled the Haltemerker again, and the Dauerlicht
+  could come on after disarming.
+
 ## 1.1.0
 
 ### Fixed

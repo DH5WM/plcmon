@@ -469,6 +469,9 @@ func TestDiscoveryEntities(t *testing.T) {
 		if !strings.HasSuffix(topic, "/plcmon/"+id+"/config") {
 			t.Errorf("topic %s does not match unique_id %s", topic, id)
 		}
+		if id == "plcmon_sw_flurlicht_dauerlicht" {
+			continue // checked below
+		}
 		if cfg["availability_topic"] != availabilityTopic {
 			t.Errorf("%s: no availability_topic", id)
 		}
@@ -555,9 +558,9 @@ func TestParseCommand(t *testing.T) {
 		{"flurlicht_taster", "PRESS", plcCommand{name: "flurlicht_taster", bit: s7.BitFlurlichtTaster}},
 		{"flurlicht_timer_reset", "PRESS", plcCommand{name: "flurlicht_timer_reset", bit: s7.BitFlurlichtTimerReset}},
 		{"flurlicht_dauerlicht", "ON", plcCommand{name: "flurlicht_dauerlicht", bit: s7.BitFlurlichtHold,
-			toggle: true, stateBit: s7.BitDauerlicht, want: true}},
+			toggle: true, stateBit: s7.BitDauerlicht, want: true, onlyDisarmed: true}},
 		{"flurlicht_dauerlicht", "OFF", plcCommand{name: "flurlicht_dauerlicht", bit: s7.BitFlurlichtHold,
-			toggle: true, stateBit: s7.BitDauerlicht, want: false}},
+			toggle: true, stateBit: s7.BitDauerlicht, want: false, onlyDisarmed: true}},
 	} {
 		got, err := parseCommand(tc.key, tc.payload)
 		if err != nil {
@@ -678,7 +681,8 @@ func newTestWriter(connectErr error) (*plcWriter, *[]string, *time.Time) {
 		dial: func() plcConn {
 			return &fakeConn{connectErr: connectErr, bits: map[s7.Merker]bool{}, log: log}
 		},
-		now: func() time.Time { return now },
+		now:      func() time.Time { return now },
+		disarmed: func() bool { return true },
 	}
 	return w, log, &now
 }
@@ -747,5 +751,94 @@ func TestHandleCommandIgnoresRetained(t *testing.T) {
 	handleCommand(w, "plcmon/cmd/flurlicht_taster", "PRESS", false)
 	if len(w.queue) != 1 {
 		t.Error("command was not queued")
+	}
+}
+
+// The PLC does not allow the Dauerlicht while the alarm system is armed and
+// reports it as off. Without the lock, every ON command would toggle the
+// Haltemerker again, and the Dauerlicht could come on after disarming.
+func TestPLCWriterDauerlichtLockedWhileArmed(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*stateStore)
+		want  string
+	}{
+		{"alarm state unknown", func(*stateStore) {}, ""},
+		{"armed (notify)", func(s *stateStore) { s.SetAlarm(mqttStatus{Armed: true}) }, ""},
+		{"armed (status word)", func(s *stateStore) { s.SetStatus(StatusMessage{}) }, ""},
+		{"triggered", func(s *stateStore) { s.SetAlarm(mqttStatus{Armed: true, Triggered: true}) }, ""},
+		{"disarmed", func(s *stateStore) { s.SetStatus(StatusMessage{AlarmUnscharf: true}) },
+			"connect, write 3=true, write 3=false, close"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStateStore()
+			tc.setup(store)
+
+			w, log, _ := newTestWriter(nil)
+			w.disarmed = store.Disarmed
+
+			cmd, _ := parseCommand("flurlicht_dauerlicht", "ON")
+			w.Enqueue(cmd)
+			w.process(<-w.queue)
+
+			if got := strings.Join(*log, ", "); got != tc.want {
+				t.Errorf("PLC access = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A command queued while disarmed is refused if the alarm system is armed
+// before it is executed.
+func TestPLCWriterDauerlichtArmedWhileQueued(t *testing.T) {
+	store := newStateStore()
+	store.SetStatus(StatusMessage{AlarmUnscharf: true})
+
+	w, log, _ := newTestWriter(nil)
+	w.disarmed = store.Disarmed
+
+	cmd, _ := parseCommand("flurlicht_dauerlicht", "ON")
+	w.Enqueue(cmd)
+	store.SetAlarm(mqttStatus{Armed: true})
+	w.process(<-w.queue)
+
+	if len(*log) != 0 {
+		t.Errorf("command was executed after arming: %v", *log)
+	}
+}
+
+// The push buttons are not locked.
+func TestPLCWriterButtonsWhileArmed(t *testing.T) {
+	w, log, _ := newTestWriter(nil)
+	w.disarmed = func() bool { return false }
+
+	cmd, _ := parseCommand("flurlicht_taster", "PRESS")
+	w.Enqueue(cmd)
+	w.process(<-w.queue)
+
+	if want := "connect, write 2=true, write 2=false, close"; strings.Join(*log, ", ") != want {
+		t.Errorf("PLC access = %v, want %s", *log, want)
+	}
+}
+
+func TestDiscoveryDauerlichtAvailability(t *testing.T) {
+	cfg := decodeDiscovery(t, true)["homeassistant/switch/plcmon/plcmon_sw_flurlicht_dauerlicht/config"]
+	if cfg == nil {
+		t.Fatal("no Dauerlicht switch")
+	}
+
+	if _, ok := cfg["availability_topic"]; ok {
+		t.Error("availability_topic and availability must not both be set")
+	}
+	if cfg["availability_mode"] != "all" {
+		t.Errorf("availability_mode = %v, want all", cfg["availability_mode"])
+	}
+
+	got, _ := json.Marshal(cfg["availability"])
+	want := `[{"topic":"plcmon/availability"},` +
+		`{"payload_available":"false","payload_not_available":"true",` +
+		`"topic":"homeassistant/binary_sensor/plcmon/plcmon_armed/state"}]`
+	if string(got) != want {
+		t.Errorf("availability:\n got %s\nwant %s", got, want)
 	}
 }
