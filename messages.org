@@ -50,7 +50,7 @@ Ziel-IP der UDP-Pakete ist hardcoded in der SPS.
 
 **** Datentelegramm
 
- - Ziel-Port: *7002/udp* (plcmon-status)
+ - Ziel-Port: *7001/udp* (plcmon-status)
  - 2 Bytes (1 Word) → 16 Bits, Big Endian
 
 Ein Telegramm enthält immer alle Zustandsbits.
@@ -72,7 +72,7 @@ Ein Telegramm enthält immer alle Zustandsbits.
 
 **** Meldungstelegramm
 
- - Ziel-Port: *7001/udp* (plcmon-notify)
+ - Ziel-Port: *7002/udp* (plcmon-notify)
  - 1 Byte
 
 Ein Telegramm enthält eine OR-Kombination folgender Bitmasken:

@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"k8s.io/klog/v2"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -36,9 +38,9 @@ func sendTelegramMessage(body string) {
 			panic(err)
 		}
 
-		url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", *telegramKey)
+		endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", *telegramKey)
 
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+		req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(payload))
 		if err != nil {
 			panic(err)
 		}
@@ -47,7 +49,13 @@ func sendTelegramMessage(body string) {
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			klog.Errorf("error sending Telegram message: %v", resp)
+			// A *url.Error includes the request URL, which contains the bot
+			// key. Only log the underlying error.
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				err = urlErr.Err
+			}
+			klog.Errorf("error sending Telegram message: %v", err)
 			return
 		}
 		defer resp.Body.Close()

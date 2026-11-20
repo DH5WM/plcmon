@@ -5,56 +5,72 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/klog/v2"
 	"net/http"
-	_ "net/http/pprof"
+	"net/http/pprof"
 	"sync"
-	"time"
 )
 
 var (
-	statusAddr = flag.String("statusAddr", "0.0.0.0:7001", "Listen address for PLCMON status")
-	notifyAddr = flag.String("notifyAddr", "0.0.0.0:7002", "Listen address for PLCMON notify")
-	debugAddr  = flag.String("debugAddr", "0.0.0.0:6060", "Listen address for debug server")
+	statusAddr  = flag.String("statusAddr", "0.0.0.0:7001", "Listen address for PLCMON status")
+	notifyAddr  = flag.String("notifyAddr", "0.0.0.0:7002", "Listen address for PLCMON notify")
+	debugAddr   = flag.String("debugAddr", "0.0.0.0:6060", "Listen address for debug server")
+	enablePprof = flag.Bool("enablePprof", false, "Serve /debug/pprof on the debug server")
 )
+
+func debugHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+
+	if *enablePprof {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
+
+	return mux
+}
 
 func main() {
 	klog.InitFlags(nil)
 	flag.Parse()
 	validatePushFlags()
 	validateTelegramArgs()
+	validateMqttFlags()
 
 	klog.CopyStandardLogTo("INFO")
 
-	http.Handle("/metrics", promhttp.Handler())
-
 	go func() {
 		klog.Info("debug server listening on ", *debugAddr)
-		klog.Error(http.ListenAndServe(*debugAddr, nil))
+		klog.Error(http.ListenAndServe(*debugAddr, debugHandler()))
 	}()
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 
-	notifyC := make(chan mqttStatus)
+	store := newStateStore()
 
 	go func() {
-		statusServer(*statusAddr)
+		statusServer(*statusAddr, store)
 		wg.Done()
 	}()
 
 	go func() {
-		notifyServer(*notifyAddr, notifyC)
+		notifyServer(*notifyAddr, store)
 		wg.Done()
 	}()
 
-	go func() {
-		for {
-			klog.Infof("connecting to mqtt server %s", *flagMqttAddr)
-			if err := mqttService(notifyC); err != nil {
-				klog.Errorf("mqttService: %v", err)
-			}
-			time.Sleep(5 * time.Second)
-		}
-	}()
+	var writer *plcWriter
+	if *flagEnableWrite {
+		writer = newPLCWriter(*flagSpsAddr)
+		go writer.run()
+	}
+
+	if *flagMqttAddr != "" {
+		go mqttService(store, writer)
+	} else {
+		klog.Info("no MQTT server configured, MQTT is disabled")
+	}
 
 	wg.Wait()
 

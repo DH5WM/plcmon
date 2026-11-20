@@ -1,6 +1,6 @@
 name: PLCMON
 description: PLCMON
-version: "1.0.7"
+version: "1.1.0"
 slug: "plcmon"
 init: false
 arch:
@@ -14,6 +14,10 @@ options:
   mqttAddr: ""
   mqttUser: ""
   mqttPass: ""
+  mqttRetain: true
+  spsAddr: "192.168.1.10"
+  enableWrite: false
+  enablePprof: false
 schema:
   pushoverKey: str
   pushoverAddr: str
@@ -22,3 +26,7 @@ schema:
   mqttAddr: str
   mqttUser: str
   mqttPass: str
+  mqttRetain: bool
+  spsAddr: str
+  enableWrite: bool
+  enablePprof: bool

@@ -64,7 +64,29 @@ func boolToFloat(b bool) float64 {
 	return 0
 }
 
-func statusServer(addr string) {
+// statusSensor describes a status bit which is exposed to Home Assistant as a
+// read-only binary_sensor. The alarm bits (10 and 11) are not listed here,
+// they feed the existing plcmon_armed / plcmon_triggered sensors.
+type statusSensor struct {
+	id   string // unique_id, also part of the MQTT topic
+	name string
+	get  func(StatusMessage) bool
+}
+
+var statusSensors = []statusSensor{
+	{"plcmon_relais_werkstatt", "Relais Werkstatt", func(m StatusMessage) bool { return m.RelaisWerkstatt }},
+	{"plcmon_relais_ukw", "Relais UKW", func(m StatusMessage) bool { return m.RelaisUKW }},
+	{"plcmon_relais_kw", "Relais KW", func(m StatusMessage) bool { return m.RelaisKW }},
+	{"plcmon_relais_zentralstrom", "Relais Zentralstrom", func(m StatusMessage) bool { return m.RelaisZentralstrom }},
+	{"plcmon_relais_flurlicht", "Relais Flurlicht", func(m StatusMessage) bool { return m.RelaisFlurlicht }},
+	{"plcmon_status_dauerlicht", "Status Dauerlicht", func(m StatusMessage) bool { return m.StatusDauerlicht }},
+	{"plcmon_kopplung_aktiv", "Außenlichtkopplung aktiv", func(m StatusMessage) bool { return m.KopplungAktiv }},
+	{"plcmon_kopplung", "Außenlichtkopplung", func(m StatusMessage) bool { return m.Kopplung }},
+	{"plcmon_flurlicht_manuell", "Flurlicht manuell", func(m StatusMessage) bool { return m.FlurlichtManuell }},
+	{"plcmon_relais_aussenlicht", "Relais Außenlicht", func(m StatusMessage) bool { return m.RelaisAussenlicht }},
+}
+
+func statusServer(addr string, store *stateStore) {
 	s, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		klog.Fatal(err)
@@ -80,6 +102,7 @@ func statusServer(addr string) {
 		n, addr, err := s.ReadFrom(buffer)
 		if err != nil {
 			klog.Errorf("failed to receive packet: %v", err)
+			continue
 		}
 
 		klog.V(2).Infof("recv: bytes=%d from=%s, buf=%x\n",
@@ -93,6 +116,8 @@ func statusServer(addr string) {
 		data := processStatusPacket(buffer[:n])
 
 		klog.V(2).Infof("data: %+v", data)
+
+		store.SetStatus(data)
 
 		// Set metrics
 		statusMessagesProcessed.Inc()
